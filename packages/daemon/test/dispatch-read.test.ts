@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { type RuntimeSession, type TaskProjection } from "@harness-anything/kernel";
 import { appendRuntimeWorkerRecord, openDispatchStream, readDispatchLiveIndex } from "../src/dispatch-stream.ts";
-import { readTaskDispatches, readTaskDispatchSession } from "../src/dispatch-read.ts";
+import { readTaskDispatches, readTaskDispatchSession, taskDispatchRowsSettled } from "../src/dispatch-read.ts";
 
 const dispatchId = "dispatch_a1b2c3d4e5f60718293a4b5c",
   runtimeSessionId = "runtime-1",
@@ -302,7 +302,6 @@ test("an unbound detached dispatch is read from the live index", () => {
       instanceId: "instance-1",
       startedAt: "2026-08-23T00:00:00.000Z",
     });
-    appendRuntimeWorkerRecord(rootDir, dispatchId, { kind: "process_started", pid: 12345 });
     const projection = {
       read: () => ({ watermark: 1, sourceRevision: 1, snapshot: { task: { taskId } } }),
       readTaskRuntimeBatch: () => ({
@@ -318,8 +317,14 @@ test("an unbound detached dispatch is read from the live index", () => {
       readDocument: () => ({ document: null }),
       readRuntimeDispatchByResumeSource: () => null,
     } as unknown as TaskProjection;
+    const opening = readTaskDispatches({ rootDir, projection, taskId });
+    assert.equal(opening.dispatches[0]?.status, "unknown");
+    assert.equal(opening.dispatches[0]?.outcome, null);
+    assert.equal(taskDispatchRowsSettled(opening.dispatches), false, "a stream header is not settlement evidence");
+    appendRuntimeWorkerRecord(rootDir, dispatchId, { kind: "process_started", pid: 12345 });
     const result = readTaskDispatches({ rootDir, projection, taskId });
     assert.equal(result.dispatches.find((row) => row.dispatchId === dispatchId)?.status, "running");
+    assert.equal(taskDispatchRowsSettled(result.dispatches), false);
     assert.equal(readDispatchLiveIndex(rootDir, [taskId]).entries.length, 1, "unbound dispatch must remain indexed");
   } finally {
     rmSync(rootDir, { recursive: true, force: true });
